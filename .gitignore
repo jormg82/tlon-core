@@ -22,4 +22,4 @@ cabal.project.local~
 .HTF/
 .ghc.environment.*
 *.tlon
-docs
+docs/model.txt
