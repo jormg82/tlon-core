@@ -23,8 +23,8 @@ initState :: CodeDic -> MS ()
 initState d = do
   let (h, g) = M.foldrWithKey allocG (H.initial, M.empty) d
       (h', a) = H.alloc h (Seq [])
-  putCode [Pushglobal "main", Eval]
-  putStack $ L.singleton a
+  putCodeStack $ L.singleton [Pushglobal "main"]
+  putAddrStack $ L.singleton a
   putHeap h'
   putGlobals g
 
@@ -55,10 +55,9 @@ run dic = do
 
 finalState :: MS Bool
 finalState = do
-  (cs, a:|as, h) <- (,,) <$> getCode <*> getStack <*> getHeap
-  -- OJO revisar condiciones de estado final
-  case (cs, as, H.lookup h a) of
-    ([], [], Just (Seq [v])) -> return $ not $ isPtr v
+  (css, a:|as, h) <- (,,) <$> getCodeStack <*> getAddrStack <*> getHeap
+  case (css, as, H.lookup h a) of
+    ([]:|[], [], Just (Seq [v])) -> return $ not $ isPtr v
     (_, _, Just (Seq _)) -> return False
     _ -> throw "Illegal state in final state check"
 
@@ -66,155 +65,193 @@ finalState = do
 step :: MS ()
 step = do
   incSteps
-  (cod, s@(a:|_), h) <- (,,) <$> getCode <*> getStack <*> getHeap
-  case (cod, H.lookup h a) of
-    (c:cs, Just (Seq vs)) -> do
-      putCode cs
-      dispatch c cs s vs h
+  (css, as@(a:|_), h) <- (,,) <$> getCodeStack <*> getAddrStack <*> getHeap
+  case H.lookup h a of
+    (Just (Seq vs)) -> dispatch css as vs h
     _ -> throw "Illegal state in step"
 
 
-dispatch :: Instruction
-         -> Code
-         -> Stack
+dispatch :: CodeStack
+         -> AddrStack
          -> [Val]
          -> H.Heap Node
          -> MS ()
-dispatch (Pushnum i) _ (a:|_) vs h = putHeap $ H.update h a (Seq $ Num i:vs)
-dispatch (Pushch i) _ (a:|_) vs h = putHeap $ H.update h a (Seq $ Ch i:vs)
-dispatch Pushfail _ (a:|_) vs h = putHeap $ H.update h a (Seq $ Fail:vs)
+dispatch ((Pushnum i:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
+  putHeap $ H.update h a (Seq $ Num i:vs)
+  
+dispatch ((Pushch c:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
+  putHeap $ H.update h a (Seq $ Ch c:vs)
 
-dispatch (Pushglobal s) _ (a:|_) vs h = do
+dispatch ((Pushfail:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
+  putHeap $ H.update h a (Seq $ Fail:vs)
+
+dispatch ((Pushglobal s:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   g <- getGlobals
   case M.lookup s g of
     Just a' -> putHeap $ H.update h a (Seq $ Ptr a':vs)
     Nothing -> throw $ "No such global: " ++ s
 
-dispatch (Pushdef k xs cs) _ s@(a:|_) vs h = do
+dispatch ((Pushdef k xs cs':cs):|css) s@(a:|_) vs h = do
+  putCodeStack $ cs:|css
   vs' <- traverse (peekCoord s h) xs
-  let (h', a') = H.alloc h (Def k vs' cs)
+  let (h', a') = H.alloc h (Def k vs' cs')
   putHeap $ H.update h' a (Seq $ Ptr a':vs)
 
-dispatch (Pusharg n m ) _ s@(a:|_) vs h = do
-  v <- peekCoord s h (n, m)
+dispatch ((Pushval n m:cs):|css) as@(a:|_) vs h = do
+  putCodeStack $ cs:|css
+  v <- peekCoord as h (n, m)
   putHeap $ H.update h a $ Seq $ v:vs
 
-dispatch (Slide n m ) _ (a:|_) vs h = do
+dispatch ((Slide n m:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   let (s1, s2) = splitAt n vs
   putHeap $ H.update h a (Seq $ s1++drop m s2)
 
-dispatch (Alloc n) _ (a:|_) vs h = do
+dispatch ((Alloc n:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   let (h', as') = H.allocn n h $ Seq []
   putHeap $ H.update h' a $ Seq $ map Ptr as'++vs
 
-dispatch (Enter n) _ s vs _ = do
+dispatch ((Enter n:cs):|css) as vs _ = do
+  putCodeStack $ cs:|css
   when (n >= length vs) (throw "Illegal position in enter instruction")
   case vs!!n of
-    Ptr a' -> putStack $ a'<|s
+    Ptr a' -> putAddrStack $ a'<|as
     _ -> throw "Illegal value in enter instruction"
 
-dispatch Return _ (_:|as) _ _ = do
+dispatch ((Return:cs):|css) (_:|as) _ _ = do
+  putCodeStack $ cs:|css
   if null as then
     throw "Empty stack in return"
   else
-    putStack $ L.fromList as
+    putAddrStack $ L.fromList as
 
-dispatch Eval cs s@(a:|_) _ h = deployAddr h a >>= dispatchEval cs s h
-dispatch Unwind cs s@(a:|_) _ h = deployAddr h a >>= dispatchUnwind cs s h
-
-dispatch (Pack s t n) _ (a:|_) vs h = do
+dispatch ((Pack s t n:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   let (s1, s2) = splitAt n vs
   putHeap $ H.update h a $ Seq $ Constr s t s1:s2
 
-dispatch (Casejump ts) cs (a:|_) vs h =
+dispatch ((Casejump ts:cs):|css) (a:|_) vs h =
   case vs of
     Constr _ t vs':vs'' -> do
       let cs' = snd $ ts!!(t-1) -- Tag is 1-based
-      putCode $ cs'++cs
+      putCodeStack $ (cs'++cs):|css
       putHeap $ H.update h a $ Seq $ vs'++vs''
     _ -> throw "No constructor for casejump!!"      
 
-dispatch (Casefail cs' cs'') cs _ vs _ = do
+dispatch ((Casefail cs' cs'':cs):|css) _ vs _ = do
   when (null vs) (throw "Null sequence in casefail")
   case head vs of
-    Fail -> putCode $ cs'++cs
-    _ -> putCode $ cs''++cs
+    Fail -> putCodeStack $ (cs'++cs):|css
+    _ -> putCodeStack $ (cs''++cs):|css
 
-dispatch Error _ _ _ _ = throw "Panic!!"
+dispatch ((Error:_):|_) _ _ _ = throw "Panic!!"
 
-dispatch Add _ (a:|_) vs h =
+dispatch ((Add:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   case vs of
     Num n1:Num n2:vs' -> putHeap $ H.update h a $ Seq $ Num(n1+n2):vs'
     _ -> throw "Operation add: bad operators"
-dispatch Sqrt _ (a:|_) vs h =
+
+dispatch ((Sqrt:cs):|css) (a:|_) vs h = do
+  putCodeStack $ cs:|css
   case vs of
     Num n:vs' -> let sq = floor $ sqrt (fromIntegral n :: Float)
                  in putHeap $ H.update h a $ Seq $ Num sq:vs'
     _ -> throw "Operation sqrt: bad operator"
 
+dispatch cs@((Eval:_):|_) as@(a:|_) _ h = do
+  deployed <- deployAddr h a
+  dispatchEval cs as h deployed
 
-peekCoord :: Stack
+dispatch cs@([]:|_) as@(a:|_) _ h = do
+  deployed <- deployAddr h a
+  dispatchUnwind cs as h deployed
+
+
+ 
+dispatchEval :: CodeStack
+             -> AddrStack
+             -> H.Heap Node
+             -> [Node]
+             -> MS ()
+dispatchEval ((_:cs):|css) _ _ [Seq (v:_)]
+  | not (isPtr v) = putCodeStack $ cs:|css
+
+dispatchEval ((_:cs):|css) _ _ [Seq (Ptr _:_), Def k _ _]
+  | k > 0 = putCodeStack $ cs:|css
+
+dispatchEval ((_:cs):|css) as h [Seq (Ptr a':_), Def 0 vs cs'] = do
+  putCodeStack $ cs':|(cs:css)
+  putAddrStack $ a'<|as
+  putHeap $ H.update h a' (Seq vs)
+
+dispatchEval ((_:cs):|css) as _ (Seq (Ptr a':_):_) = do
+  putCodeStack $ []:|(cs:css)
+  putAddrStack $ a'<|as
+
+dispatchEval _ _ _ _ = throw "Illegal state in dispatch"
+
+
+
+dispatchUnwind :: CodeStack
+               -> AddrStack
+               -> H.Heap Node
+               -> [Node]
+               -> MS ()
+dispatchUnwind ([]:|(cs:css)) (_:|a:as) h [Seq [v]]
+  | not (isPtr v) = do
+      putCodeStack $ cs:|css
+      case H.lookup h a of
+        Just (Seq (_:vs)) -> do
+          putAddrStack $ a:|as
+          putHeap $ H.update h a (Seq $ v:vs)
+        _ -> throw "Illegal value in unwind instruction"
+
+dispatchUnwind ([]:|css) as h [Seq (Ptr a':_), Def 0 vs' cs'] = do
+  putCodeStack $ cs':|([]:css)
+  putAddrStack $ a'<|as
+  putHeap $ H.update h a' (Seq vs')
+
+dispatchUnwind ([]:|css) (a:|_) h [Seq (Ptr _:vs), Def k vs' cs']
+  | 0 < k && k <= length vs = do
+      putCodeStack $ cs':|css
+      putHeap $ H.update h a $ (Seq $ vs'++vs)
+
+dispatchUnwind ([]:|(cs:css)) (_:|a:as) h [Seq (Ptr a'':vs'), Def k _ _]
+  | k > length vs' =
+      case H.lookup h a of
+        Just (Seq (_:vs)) -> do
+          putCodeStack $ (cs:|css)
+          putAddrStack $ a:|as
+          putHeap $ H.update h a $ Seq $ Ptr a'':(vs'++vs)
+        _ -> throw "Illegal value in unwind instruction"
+
+dispatchUnwind css as _ (Seq (Ptr a':_):_) = do
+  putCodeStack $ []<|css
+  putAddrStack $ a'<|as
+
+dispatchUnwind _ _ _ _ = throw "Illegal state in unwind"
+
+
+
+peekCoord :: AddrStack
           -> H.Heap Node
           -> (Int, Int)
           -> MS Val
-peekCoord s h (x, y) = do
-  when (x >= L.length s) (throw "Illegal state in peek coord")
-  let a = s L.!! x
+peekCoord as h (x, y) = do
+  when (x >= L.length as) (throw "Illegal state in peek coord")
+  let a = as L.!! x
   case H.lookup h a of
     Just (Seq vs) -> do
       when (y >= length vs) (throw "Illegal state in peek coord")
       return $ vs!!y
     _ -> throw "Illegal state in peek coord"
 
-
-dispatchEval :: Code
-             -> Stack
-             -> H.Heap Node
-             -> [Node]
-             -> MS ()
-dispatchEval _ _ _ [Seq (v:_)] | not (isPtr v) = return ()
-dispatchEval _ _ _ [Seq (Ptr _:_), Def k _ _] | k > 0 = return ()
-dispatchEval cs s h [Seq (Ptr a':_), Def 0 vs cs'] = do
-  putCode $ cs'++[Unwind]++cs
-  putStack $ a'<|s
-  putHeap $ H.update h a' (Seq vs)
-dispatchEval cs s _ (Seq (Ptr a':_):_) = do
-  putCode $ Unwind:cs 
-  putStack $ a'<|s
-dispatchEval _ _ _ _ = throw "Illegal state in dispatch"
-
-
-dispatchUnwind :: Code
-               -> Stack
-               -> H.Heap Node
-               -> [Node]
-               -> MS ()
-dispatchUnwind _ (_:|a:as) h [Seq [v]]
-  | not (isPtr v) =
-      case H.lookup h a of
-        Just (Seq (_:vs)) -> do
-          putStack (a:|as)
-          putHeap $ H.update h a (Seq $ v:vs)
-        _ -> throw "Illegal value in unwind instruction"
-dispatchUnwind cs s h [Seq (Ptr a':_), Def 0 vs' cs'] = do
-  putCode $ cs'++[Unwind, Unwind]++cs
-  putStack $ a'<|s
-  putHeap $ H.update h a' (Seq vs')
-dispatchUnwind cs (a:|_) h [Seq (Ptr _:vs), Def k vs' cs']
-  | 0 < k && k <= length vs = do
-      putCode $ cs'++[Unwind]++cs
-      putHeap $ H.update h a $ (Seq $ vs'++vs)
-dispatchUnwind _ (_:|a:as) h [Seq (Ptr a'':vs'), Def k _ _]
-  | k > length vs' =
-      case H.lookup h a of
-        Just (Seq (_:vs)) -> do
-          putStack $ a:|as
-          putHeap $ H.update h a $ Seq $ Ptr a'':(vs'++vs)
-        _ -> throw "Illegal value in unwind instruction"
-dispatchUnwind cs s _ (Seq (Ptr a':_):_) = do
-  putCode $ Unwind:Unwind:cs
-  putStack $ a'<|s
-dispatchUnwind _ _ _ _ = throw "Illegal state in unwind"
 
 
 deployAddr :: H.Heap Node -> H.Addr -> MS [Node]
@@ -225,4 +262,3 @@ deployAddr h a =
         Ptr a' -> return [n, fromJust $ H.lookup h a']
         _      -> return [n]
     _ -> throw "Deploying address failure"
-

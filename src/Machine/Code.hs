@@ -30,13 +30,12 @@ data Instruction
   | Pushfail
   | Pushglobal String
   | Pushdef Int [(Int, Int)] Code
-  | Pusharg Int Int
+  | Pushval Int Int
   | Slide Int Int
   | Alloc Int
   | Enter Int
   | Return
   | Eval
-  | Unwind
   | Pack String Int Int -- Name Tag NumArgs
   | Casejump [(Int, Code)]
   | Casefail Code Code
@@ -55,13 +54,12 @@ instance P.Buildable Instruction where
   build (Pushglobal s) = "pushglobal " +| s |+ ""
   build (Pushdef n cis cs) =
     "pushdef " +| n |+ " " +|| cis ||+ " {" +| cs |+ "}"
-  build (Pusharg x y) = "pusharg " +| x |+ " " +| y |+ ""
+  build (Pushval x y) = "pushval " +| x |+ " " +| y |+ ""
   build (Slide m n) = "slide " +| m |+ " " +| n |+ ""
   build (Alloc n) = "alloc " +| n |+ ""
   build (Enter n) = "enter " +| n |+ ""
   build Return = "return"
   build Eval = "eval"
-  build Unwind = "unwind"
   build (Pack s n m) = "pack " +| s |+ " " +| n |+ " " +| m |+ ""
   build (Casejump alts) = "casejump " +| alts |+ ""
   build (Casefail cs cs') = "casefail " +| cs |+ " " +| cs' |+ ""

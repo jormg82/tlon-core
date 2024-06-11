@@ -53,14 +53,14 @@ compiledCode =
     [
       ("id", (1, [])),
       ("k", (2, [Slide 1 1])),
-      ("k1", (2, [Pusharg 0 1, Slide 1 2])),
-      ("s", (3, [Alloc 1, Enter 0, Pusharg 1 3, Pusharg 1 2, Return,
-                 Pusharg 0 3, Pusharg 0 2, Slide 3 3])),
-      ("compose", (3, [Alloc 1, Enter 0, Pusharg 1 3, Pusharg 1 2, Return,
-                       Pusharg 0 1, Slide 2 3])),
-      ("twice", (1, [Pusharg 0 0, Pusharg 0 1, Pushglobal "compose",
+      ("k1", (2, [Pushval 0 1, Slide 1 2])),
+      ("s", (3, [Alloc 1, Enter 0, Pushval 1 3, Pushval 1 2, Return,
+                 Pushval 0 3, Pushval 0 2, Slide 3 3])),
+      ("compose", (3, [Alloc 1, Enter 0, Pushval 1 3, Pushval 1 2, Return,
+                       Pushval 0 1, Slide 2 3])),
+      ("twice", (1, [Pushval 0 0, Pushval 0 1, Pushglobal "compose",
                      Slide 2 1])),
-      ("add", (2, [Pusharg 0 1, Eval, Pusharg 0 1, Eval, Add, Slide 1 2])),
+      ("add", (2, [Pushval 0 1, Eval, Pushval 0 1, Eval, Add, Slide 1 2])),
       ("sqrt", (1, [Eval, Sqrt])),
       ("_error", (0, [Error])),
       ("False", (0, [Pack "False" 1 0])), -- Tag is 1-based
@@ -127,7 +127,7 @@ compileE dic n (ELet isrec ds e)
     cs' = concat $ map (compileRecExp dic'') (reverse $ zip [0..] es)
 compileE dic n (EFBar e1 e2) =
   compileAC dic e2 ++ compileAE (update1Dic dic) e1 ++
-  [Casefail [Pusharg 0 1, Slide 1 (n+2)] [Slide 1 (n+1)]]
+  [Casefail [Pushval 0 1, Slide 1 (n+2)] [Slide 1 (n+1)]]
 compileE dic n e@(ELam _ _) = compileC dic n e
 compileE dic n (ECase e as) =
   compileAE dic e ++ [Casejump $ map (compileAlt dic n) as]
@@ -140,7 +140,7 @@ compileC _ n (ELit (LChar c)) = Pushch c:slide 1 n
 compileC dic n (EVar v)
   | v == "_fail" = Pushfail:slide 1 n
   | otherwise = case lookupDic v dic of
-      Just (x, y) -> Pusharg x y:slide 1 n
+      Just (x, y) -> Pushval x y:slide 1 n
       Nothing -> Pushglobal v:slide 1 n
 compileC dic n e@(EAp _ _) = foldCompile step dic es ++ slide len n
   where
@@ -174,7 +174,7 @@ compileAE dic e@(ELit _) = compileC dic 0 e
 compileAE dic (EVar v)
   | v == "_fail" = [Pushfail]
   | otherwise = case lookupDic v dic of
-      Just (x, y) -> [Pusharg x y, Eval]
+      Just (x, y) -> [Pushval x y, Eval]
       Nothing -> [Pushglobal v, Eval]
 compileAE _ (EFBar _ _) = error "FBar in wrong context"
 compileAE dic e@(ELam _ _) = compileC dic 0 e

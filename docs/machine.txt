@@ -1,0 +1,118 @@
+
+data Val = Num Int
+         | Ch Char
+         | Fail
+         | Constr String Int [Val]
+
+data Node = Def Int [Val] Code
+          | Seq [Val]
+
+data Instruction = Pushnum Int | Pushch Char
+                 | Pushfail
+                 | Pushglobal String
+                 | Pushdef Int [(Int, Int)] Code
+                 | Pushval Int Int
+                 | Slide Int Int
+                 | Alloc Int
+                 | Enter Int
+                 | Return
+                 | Eval
+                 | Pack String Int Int
+                 | Casejump [(Int, Code)]
+                 | Casefail Code Code
+                 | Error
+                 | Add | Sqrt ...
+
+type Code      = [Instruction]
+type CodeStack = [Code]
+type AddrStack = [Addr]
+type Heap      = H.Heap Node
+type Globals   = Map String Addr
+
+
+Initial state: [[Pushglobal "main"]] [a] h{a -> []}
+Final states:  [[]] [a] h{a -> [v]} (v literal or Constructor) 
+              (Error:cs):css as h
+
+
+-------------------------------------------------------------------------------
+       (Pushnum i:cs):css a:as h{a -> vs}
+==>                cs:css a:as h{a -> Num i:vs}
+-------------------------------------------------------------------------------
+         (Pusch c:cs):css a:as h{a -> vs}
+==>                cs:css a:as h{a -> Ch c:vs}
+-------------------------------------------------------------------------------
+         (Pusfail:cs):css a:as h{a -> vs}
+==>                cs:css a:as h{a -> Fail:vs}
+-------------------------------------------------------------------------------
+    (Pushglobal s:cs):css a:as h{a -> vs}
+==>                cs:css a:as h{a -> Ptr a':vs}
+                (globals s == a') 
+-------------------------------------------------------------------------------
+    (Pushdef k xs cs':cs):css a:as h{a -> vs}
+==>               cs:css      a:as h{a -> Ptr a':vs, a' -> Def k ns cs'}
+   			       (ns=[vs'(y) | xs -> (x, y), as(x) -> vs']) 
+-------------------------------------------------------------------------------
+     (Pushval n m:cs):css a0:..:an:as h{a0 -> vs, an -> v0:..:vm:vs'}
+==>                cs:css a0:..:an:as h{a0 -> vm:vs}
+-------------------------------------------------------------------------------
+    (Slide n m:cs):css a:as h{a0 -> v1:..:vn:vn+1:..:vn+m:vs'}
+==>             cs:css a:as h{a0 -> v1:..:vn:vs}
+-------------------------------------------------------------------------------
+    (Alloc n:cs):css a:as h{a -> vs}
+==>           cs:css a:as h{a -> Ptr a1:..:Ptr an:vs, a1, .., an -> []}
+-------------------------------------------------------------------------------
+        (Enter n:cs):css    a:as h{a -> v0:...:vn:vs (vn=Ptr a')}
+==>               cs:css a':a:as h
+                (vn = Ptr a')
+-------------------------------------------------------------------------------
+        (Return:cs):css a:as h
+==>              cs:css   as h
+-------------------------------------------------------------------------------
+      (Add:cs):css a:as h{a -> Num n1:Num n2:vs}
+==>         cs:css a:as h{a -> Num (n1+n2):vs}
+-------------------------------------------------------------------------------
+     (Sqrt:cs):css a:as h{a -> Num n:vs}
+==>         cs:css a:as h{a -> Num (sqrt n):vs}
+-------------------------------------------------------------------------------
+    (Pack s t n:cs):css a:as h{a -> v1:..:vn:vs}
+==>              cs:css a:as h{a -> Constr s t [v1, .., vn]:vs}
+-------------------------------------------------------------------------------
+    (Casejump [.., t -> cs', ..]:cs):css a:as h{a -> Constr s t vs':vs}
+==>                        (cs'++cs):css a:as h{a -> vs'++vs}
+-------------------------------------------------------------------------------
+    (Casefail cs' cs'':cs):css a:as h{a -> Fail:vs}
+==>              (cs'++cs):css a:as h
+-------------------------------------------------------------------------------
+    (Casefail cs' cs'':cs):css a:as h{a -> v:vs}
+==>                   cs''++cs a:as h
+                (v /= Fail)
+-------------------------------------------------------------------------------
+    (Eval:cs):css a:as h{a -> v:vs}
+==>        cs:css a:as h
+    (v is literal or Constructor or Fail or v = Ptr a', a' -> Def k * *, k>0)
+-------------------------------------------------------------------------------
+    (Eval:cs):css    a:as h{a -> Ptr a':vs, a' -> Def 0 vs' cs'}
+==>    cs':cs:css a':a:as h{a' -> vs'}
+-------------------------------------------------------------------------------
+    (Eval:cs):css    a:as h{a -> Ptr a':vs, a' /-> Def * * *}
+==>     []:cs:css a':a:as h
+-------------------------------------------------------------------------------
+    []:css a':a:as h{a -> Ptr a':vs, a' -> [v]}
+==>    css    a:as h{a -> v:vs}
+                (v literal or constructor or fail)
+-------------------------------------------------------------------------------
+        []:css    a:as h{a -> Ptr a':vs, a' -> Def 0 vs' cs'}
+==> cs':[]:css a':a:as h{a' -> vs'}
+-------------------------------------------------------------------------------
+     []:css a:as h{a -> Ptr a':vs, a' -> Def k vs' cs'}
+==> cs':css a:as h{a -> vs' ++ vs}
+                (0 < k <= length vs)
+-------------------------------------------------------------------------------
+    []:css a':a:as h{a -> Ptr a':vs, a' -> Ptr a'':vs', a'' -> Def k * *}
+==>    css    a:as h{a -> Ptr a'':(vs' ++ vs)}
+                (k > length vs')
+-------------------------------------------------------------------------------
+       []:css    a:as h{a -> Ptr a':vs, a' /-> Def k * *}
+==> []:[]:css a':a:as h
+

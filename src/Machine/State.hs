@@ -5,7 +5,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Machine.State
-  ( Stack,
+  ( CodeStack,
+    AddrStack,
     Globals,
     State(..),
     MS,
@@ -13,13 +14,13 @@ module Machine.State
     throw,
     try,
     traceIO,
-    getCode,
-    getStack,
+    getCodeStack,
+    getAddrStack,
     getHeap,
     getGlobals,
     getSteps,
-    putCode,
-    putStack,
+    putCodeStack,
+    putAddrStack,
     putHeap,
     putGlobals,
     incSteps,
@@ -41,13 +42,14 @@ import qualified Machine.Heap as H
 import Machine.Node
 import qualified Util.Pretty as P
 
-type Stack = L.NonEmpty H.Addr
+type CodeStack = L.NonEmpty Code
+type AddrStack = L.NonEmpty H.Addr
 type Globals = M.Map String H.Addr
 
 -- State
 data State = State
-  { code :: Code,
-    stack :: Stack,
+  { codeStack :: CodeStack,
+    addrStack :: AddrStack,
     heap :: H.Heap Node,
     globals :: Globals,
     steps :: Int
@@ -55,8 +57,8 @@ data State = State
 
 emptyState :: State
 emptyState = State
-  { code=undefined,
-    stack=undefined,
+  { codeStack=undefined,
+    addrStack=undefined,
     heap=undefined,
     globals=undefined,
     steps=0
@@ -80,11 +82,11 @@ traceIO = liftIO . putStrLn
 
 
 -- accessing the state
-getCode :: MS Code
-getCode = code <$> lift get
+getCodeStack :: MS CodeStack
+getCodeStack = codeStack <$> lift get
 
-getStack :: MS Stack
-getStack = stack <$> lift get
+getAddrStack :: MS AddrStack
+getAddrStack = addrStack <$> lift get
 
 getHeap :: MS (H.Heap Node)
 getHeap = heap <$> lift get
@@ -96,11 +98,11 @@ getSteps :: MS Int
 getSteps = steps <$> lift get
 
 -- modifying the state
-putCode :: Code -> MS ()
-putCode c = lift get >>= \s -> lift (put s{code = c})
+putCodeStack :: CodeStack -> MS ()
+putCodeStack c = lift get >>= \s -> lift (put s{codeStack = c})
 
-putStack :: Stack -> MS ()
-putStack st = lift get >>= \s -> lift (put s{stack = st})
+putAddrStack :: AddrStack -> MS ()
+putAddrStack a = lift get >>= \s -> lift (put s{addrStack = a})
 
 putHeap :: H.Heap Node -> MS ()
 putHeap h = lift get >>= \s -> lift (put s{heap = h})
@@ -116,10 +118,10 @@ incSteps = lift get >>= \s -> lift (put s{steps = steps s+1})
 -- Pretty
 
 instance P.Buildable State where
-  build State{code=cs, stack=as, heap=h, steps=s} =
+  build State{codeStack=css, addrStack=as, heap=h, steps=s} =
     P.nameF "<<state>>"
-      $ P.nameF "code" (P.listF cs)
-      <> P.nameF "stack" (P.listF $ map P.pairMapF nodes)
+      $ P.nameF "code stack" (P.listF css)
+      <> P.nameF "addr stack" (P.listF $ map P.pairMapF nodes)
       <> P.nameF "heap size" (P.build $ H.size h)
       <> P.nameF "steps" (P.build s)
     where
