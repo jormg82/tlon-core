@@ -1,0 +1,3 @@
+
+- Refactorizar Machine/Eval.hs y Machine/State.hs para que las operaciones
+  sobre el Heap, CodeStack, etc se hagan privadamente en State
